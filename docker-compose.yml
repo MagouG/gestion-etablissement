@@ -1,0 +1,23 @@
+services:
+  mysql:
+    image: mysql:8
+    container_name: ge-mysql-container
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: gestion_etablissement
+    ports:
+      - "3307:3306"
+
+  app:
+    build: .
+    container_name: gestion-etablissement-container
+    restart: always
+    depends_on:
+      - mysql
+    ports:
+      - "8888:8888"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://ge-mysql-container:3306/gestion_etablissement?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: root

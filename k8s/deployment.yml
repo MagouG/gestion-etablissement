@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gestion-etablissement
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: gestion-etablissement
+  template:
+    metadata:
+      labels:
+        app: gestion-etablissement
+    spec:
+      containers:
+        - name: gestion-etablissement
+          image: zenitsu2001/gestion-etablissement:latest
+          ports:
+            - containerPort: 8888
+          env:
+            - name: SPRING_DATASOURCE_URL
+              value: "jdbc:mysql://mysql-service:3306/gestion_etablissement?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true"
+            - name: SPRING_DATASOURCE_USERNAME
+              value: "root"
+            - name: SPRING_DATASOURCE_PASSWORD
+              value: "root"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gestion-etablissement-service
+spec:
+  type: NodePort  # Changement de LoadBalancer à NodePort
+  ports:
+    - port: 8888
+      targetPort: 8888
+      nodePort: 32583  # Port externe local (vous pouvez le changer si nécessaire)
+  selector:
+    app: gestion-etablissement

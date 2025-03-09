@@ -1,0 +1,131 @@
+stages:
+  - build
+  - test
+ # - sonar
+  - package
+  - docker
+  - deploy
+cache:
+  key:
+    files:
+      - pom.xml
+  paths:
+    - .m2/repository/
+  policy: pull-push
+
+variables:
+  IMAGE_NAME: "registry.gitlab.com/groupe-devops3/gestion-etablissement"
+  REGISTRY_DEV: "elhadji01/dev-registry"
+  REGISTRY_PROD: "elhadji01/prod-registry"
+  SONAR_PROJECT_KEY: "elhadji-mamadou-sarr_gateway-service"
+  SONAR_ORG: "elhadji-mamadou-sarr"
+  SONAR_HOST: "https://sonarcloud.io"
+
+
+before_script:
+  - export TAG=${CI_COMMIT_REF_NAME}
+
+build:
+  stage: build
+  image: maven:3.8.6-eclipse-temurin-17
+  script:
+    - mvn clean package -DskipTests
+  artifacts:
+    paths:
+      - target/*.jar
+test:
+  stage: test
+  image: maven:3.8.6-eclipse-temurin-17
+  services:
+    - name: mysql:8.0
+      alias: mysql
+  variables:
+    MYSQL_DATABASE: gestion_etablissement
+    MYSQL_ROOT_PASSWORD: root
+    SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/gestion_etablissement?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+    SPRING_DATASOURCE_USERNAME: root
+    SPRING_DATASOURCE_PASSWORD: root
+  before_script:
+    - apt-get update && apt-get install -y mysql-client
+    - until mysql -h mysql -P 3306 -uroot -proot -e "select 1"; do echo "Waiting for MySQL to be available..."; sleep 5; done
+  script:
+    - mvn test
+package:
+  stage: package
+  image: maven:3.8.6-eclipse-temurin-17
+  services:
+    - name: mysql:8.0
+      alias: mysql
+  variables:
+    MYSQL_DATABASE: gestion_etablissement
+    MYSQL_ROOT_PASSWORD: root
+    SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/gestion_etablissement?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+    SPRING_DATASOURCE_USERNAME: root
+    SPRING_DATASOURCE_PASSWORD: root
+  before_script:
+    - apt-get update && apt-get install -y mysql-client
+    - until mysql -h mysql -P 3306 -uroot -proot -e "select 1"; do echo "Waiting for MySQL to be available..."; sleep 5; done
+  script:
+    - mvn package
+#sonar:
+#  stage: test
+#  image: maven:3.8.6-eclipse-temurin-17
+#  script:
+#    - mvn sonar:sonar -Dsonar.projectKey=$SONAR_PROJECT_KEY -Dsonar.organization=$SONAR_ORG -Dsonar.host.url=$SONAR_HOST -Dsonar.login=$SONAR_TOKEN
+#  only:
+#    - main
+docker:
+  stage: docker
+  image: docker:latest
+  services:
+    - docker:dind
+  script:
+    - echo "Connexion à GitLab Container Registry..."
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" $CI_REGISTRY
+    - export IMAGE_TAG="$IMAGE_NAME:$TAG"
+    - echo "Création de l'image Docker avec le tag :é= $IMAGE_TAG"
+    - docker build -t "$IMAGE_TAG" .
+    - docker push "$IMAGE_TAG"
+
+deploy:
+  stage: deploy
+  image: ubuntu:latest
+  variables:
+    IMAGE_NAME: "$IMAGE_NAME:$TAG"
+
+  before_script:
+    - apt-get update && apt-get install -y curl python3-venv python3-pip  # Installer curl et les outils Python
+    - python3 -m venv venv  # Créer un environnement virtuel
+    - source venv/bin/activate  # Activer l'environnement virtuel
+    - pip install awscli  # Installer AWS CLI dans l'environnement virtuel
+    - curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"  # Télécharger kubectl
+    - install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl  # Installer kubectl
+
+  script:
+    - echo "🔑 Configurer AWS CLI"
+    - aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
+    - aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
+    - aws configure set region eu-north-1
+#    - echo "🔑 Mettre à jour le contexte Kubernetes pour EKS"
+#    - aws eks update-kubeconfig --name gestion-etablissement-cluster --region eu-north-1
+#    - kubectl config current-context
+#    - echo "🔑 Configurer l'accès à Kubernetes"
+#    - echo "$KUBECONFIG" | base64 --decode > kubeconfig.yaml
+#    - cat kubeconfig.yaml  # Afficher le contenu du fichier kubeconfig.yaml
+#    - export KUBECONFIG=kubeconfig.yaml
+#    - kubectl config get-contexts  # Lister tous les contextes disponibles
+#    - kubectl config use-context arn:aws:eks:eu-north-1:851725523231:cluster/gestion-etablissement-cluster
+#    - echo "🔍 Vérifier la connexion au cluster EKS"
+#    - kubectl get nodes
+#    - echo "🚀 Déployer sur Kubernetes (Preprod)"
+#    - kubectl apply -f k8s/namespace.yaml
+#    - kubectl apply -f k8s/deployment.yaml
+#    - kubectl apply -f k8s/service.yaml
+
+
+
+
+
+
+
+

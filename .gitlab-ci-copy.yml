@@ -1,0 +1,150 @@
+# Définition des différentes étapes du pipeline
+stages:
+  - build              # Étape de compilation du projet
+  - test               # Étape des tests unitaires et d'intégration
+  - selenium           # Étape des tests Selenium
+  - package            # Étape de création de l'artefact final
+  - docker             # Étape de création et push de l'image Docker
+  - deploy             # Étape de déploiement sur Kubernetes
+
+# Cache Maven pour éviter de retélécharger les dépendances à chaque exécution
+cache:
+  key:
+    files:
+      - pom.xml  # Utilisation du fichier pom.xml comme clé de cache
+  paths:
+    - .m2/repository/  # Cache du répertoire local Maven
+  policy: pull-push
+
+# Définition des variables d'environnement utilisées dans le pipeline
+variables:
+  IMAGE_NAME: "registry.gitlab.com/groupe-devops3/gestion-etablissement"  # Nom de l'image Docker
+  REGISTRY_DEV: "elhadji01/dev-registry"  # Registry de développement
+  REGISTRY_PROD: "elhadji01/prod-registry"  # Registry de production
+
+# Étape de préparation avant l'exécution des scripts
+before_script:
+  - export TAG=${CI_COMMIT_REF_NAME}  # Définir le tag à partir de la branche actuelle
+
+# 🔹 Étape 1 : Compilation du projet
+build:
+  stage: build
+  image: maven:3.8.6-eclipse-temurin-17  # Image Maven avec OpenJDK 17
+  script:
+    - mvn clean package -DskipTests  # Nettoyage du projet et compilation sans les tests
+  artifacts:
+    paths:
+      - target/*.jar  # Conserver le fichier JAR généré
+
+# 🔹 Étape 2 : Tests unitaires et d'intégration
+test:
+  stage: test
+  image: maven:3.8.6-eclipse-temurin-17  # Image Maven avec OpenJDK 17
+  services:
+    - name: mysql:8.0  # Service MySQL pour les tests d'intégration
+      alias: mysql  # Alias MySQL pour la connexion
+  variables:
+    MYSQL_DATABASE: gestion_etablissement
+    MYSQL_ROOT_PASSWORD: root
+    SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/gestion_etablissement?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+    SPRING_DATASOURCE_USERNAME: root
+    SPRING_DATASOURCE_PASSWORD: root
+  before_script:
+    - apt-get update && apt-get install -y mysql-client  # Installer mysql-client pour interagir avec MySQL
+    - until mysql -h mysql -P 3306 -uroot -proot -e "select 1"; do echo "Waiting for MySQL to be available..."; sleep 5; done  # Attendre que MySQL soit disponible
+  script:
+    - mvn test  # Exécution des tests unitaires et d'intégration
+
+# 🔹 Étape 3 : Tests Selenium
+selenium-tests:
+  stage: selenium  # Nouvelle étape dédiée aux tests Selenium
+  image: "maven:3.8.6-eclipse-temurin-17"  # Image Maven avec OpenJDK 17
+  services:
+    - name: mysql:8.0  # Service MySQL pour les tests Selenium
+      alias: mysql  # Alias MySQL pour la connexion
+    - name: selenium/standalone-chrome  # Utilisation de Selenium avec le navigateur Chrome
+      alias: selenium  # Alias Selenium
+  variables:
+    MYSQL_DATABASE: gestion_etablissement
+    MYSQL_ROOT_PASSWORD: root
+    SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/gestion_etablissement?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+    SPRING_DATASOURCE_USERNAME: root
+    SPRING_DATASOURCE_PASSWORD: root
+  before_script:
+    - apt-get update && apt-get install -y mysql-client  # Installer mysql-client pour interagir avec MySQL
+    - until mysql -h mysql -P 3306 -uroot -proot -e "select 1"; do echo "Waiting for MySQL to be available..."; sleep 5; done  # Attendre que MySQL soit disponible
+  script:
+    - echo "Démarrage de l'application en arrière-plan..."  # Démarrer l'application pour les tests Selenium
+    - mvn spring-boot:run &  # Lancer l'application en arrière-plan
+    - sleep 10  # Attendre que l'application démarre
+    - echo "Exécution des tests Selenium..."  # Lancer les tests Selenium
+    - mvn test -Dtest=isi.devops.gestion_etablissement.selenium.ClasseTest  # Exécuter les tests Selenium
+  only:
+    - main  # Exécuter cette étape seulement sur la branche principale
+
+# 🔹 Étape 4 : Création de l'artefact final
+package:
+  stage: package
+  image: maven:3.8.6-eclipse-temurin-17  # Image Maven avec OpenJDK 17
+  services:
+    - name: mysql:8.0  # Service MySQL pour la création du package
+      alias: mysql  # Alias MySQL pour la connexion
+  variables:
+    MYSQL_DATABASE: gestion_etablissement
+    MYSQL_ROOT_PASSWORD: root
+    SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/gestion_etablissement?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+    SPRING_DATASOURCE_USERNAME: root
+    SPRING_DATASOURCE_PASSWORD: root
+  before_script:
+    - apt-get update && apt-get install -y mysql-client  # Installer mysql-client pour interagir avec MySQL
+    - until mysql -h mysql -P 3306 -uroot -proot -e "select 1"; do echo "Waiting for MySQL to be available..."; sleep 5; done  # Attendre que MySQL soit disponible
+  script:
+    - mvn package  # Création du package final (JAR ou autre artefact)
+
+# 🔹 Étape 5 : Création et push de l'image Docker
+docker:
+  stage: docker
+  image: docker:latest  # Utiliser Docker pour la création et le push de l'image
+  services:
+    - docker:dind  # Service Docker-in-Docker
+  script:
+    - echo "Connexion à GitLab Container Registry..."  # Connexion au registre Docker de GitLab
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" $CI_REGISTRY
+    - export IMAGE_TAG="$IMAGE_NAME:$TAG"  # Définir le tag de l'image
+    - echo "Création de l'image Docker avec le tag : $IMAGE_TAG"
+    - docker build -t "$IMAGE_TAG" .  # Créer l'image Docker
+    - docker push "$IMAGE_TAG"  # Push de l'image vers le registre Docker
+
+# 🔹 Étape 6 : Déploiement sur Kubernetes
+deploy:
+  stage: deploy
+  image: ubuntu:latest  # Utilisation d'une image Ubuntu pour déployer sur Kubernetes
+  variables:
+    IMAGE_NAME: "$IMAGE_NAME:$TAG"  # Nom de l'image Docker avec tag
+  before_script:
+    - apt-get update && apt-get install -y curl python3-venv python3-pip  # Installer curl et outils Python
+    - python3 -m venv venv  # Créer un environnement virtuel
+    - source venv/bin/activate  # Activer l'environnement virtuel
+    - pip install awscli  # Installer AWS CLI
+    - curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"  # Télécharger kubectl
+    - install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl  # Installer kubectl
+  script:
+    - echo "🔑 Configurer AWS CLI"
+    - aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID  # Configurer AWS CLI
+    - aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
+    - aws configure set region eu-north-1
+    - echo "🔑 Mettre à jour le contexte Kubernetes pour EKS"
+    - aws eks update-kubeconfig --name gestion-etablissement-cluster --region eu-north-1  # Mettre à jour kubeconfig
+    - kubectl config current-context  # Vérifier le contexte Kubernetes actuel
+#    - echo "🔑 Configurer l'accès à Kubernetes"
+#    - echo "$KUBECONFIG" | base64 --decode > kubeconfig.yaml
+#    - cat kubeconfig.yaml  # Afficher le contenu du fichier kubeconfig.yaml
+#    - export KUBECONFIG=kubeconfig.yaml
+#    - kubectl config get-contexts  # Lister tous les contextes disponibles
+#    - kubectl config use-context arn:aws:eks:eu-north-1:851725523231:cluster/gestion-etablissement-cluster
+#    - echo "🔍 Vérifier la connexion au cluster EKS"
+#    - kubectl get nodes
+#    - echo "🚀 Déployer sur Kubernetes (Preprod)"
+#    - kubectl apply -f k8s/namespace.yaml
+#    - kubectl apply -f k8s/deployment.yaml
+#    - kubectl apply -f k8s/service.yaml

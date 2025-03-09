@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <title>Supprimer une Classe</title>
+</head>
+<body>
+<h1>Supprimer un Étudiant</h1>
+<form th:action="@{/api/classes/{id}(id=${id})}" method="delete">
+    <label for="id">ID de la classe:</label>
+    <input type="number" id="id" name="id" required>
+    <br>
+    <button type="submit">Supprimer</button>
+</form>
+</body>
+</html>
